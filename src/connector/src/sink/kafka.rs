@@ -41,6 +41,8 @@ use crate::{
     deserialize_bool_from_string, deserialize_duration_from_string, deserialize_u32_from_string,
 };
 
+use crate::sink::convert_json2pb;
+
 pub const KAFKA_SINK: &str = "kafka";
 
 const fn _default_timeout() -> Duration {
@@ -377,16 +379,12 @@ impl<const APPEND_ONLY: bool> KafkaSink<APPEND_ONLY> {
     async fn append_only(&self, chunk: StreamChunk) -> Result<()> {
         for (op, row) in chunk.rows() {
             if op == Op::Insert {
-                let record = Value::Object(record_to_json(
-                    row,
-                    &self.schema.fields,
-                    TimestampHandlingMode::Milli,
-                )?)
-                .to_string();
+                let record = Value::Object(record_to_json(row, &self.schema.fields, TimestampHandlingMode::String)?).to_string();
+                let pb_record = convert_json2pb("/home/ubuntu/rising/risingwave/src/connector/src/sink/check.proto","Sample", record.as_str(), 1);
                 self.send(
                     BaseRecord::to(self.config.common.topic.as_str())
                         .key(self.gen_message_key().as_bytes())
-                        .payload(record.as_bytes()),
+                        .payload(&pb_record),
                 )
                 .await?;
             }
@@ -680,6 +678,8 @@ mod test {
     use maplit::hashmap;
     use risingwave_common::test_prelude::StreamChunkTestExt;
     use risingwave_common::types::DataType;
+    use risingwave_common::types::ScalarImpl;
+    use risingwave_common::row::OwnedRow;
 
     use super::*;
 
@@ -764,6 +764,7 @@ mod test {
     #[tokio::test]
     async fn test_kafka_producer() -> Result<()> {
         let properties = hashmap! {
+            "connector".to_string() => "kafka".to_string(),
             "properties.bootstrap.server".to_string() => "localhost:29092".to_string(),
             "identifier".to_string() => "test_sink_1".to_string(),
             "type".to_string() => "append-only".to_string(),
@@ -879,6 +880,63 @@ mod test {
             serde_json::from_str::<Value>("{\"v1\":0,\"v2\":0.0,\"v3\":{\"v4\":0,\"v5\":0.0}}")
                 .unwrap()
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_kafka_append_only() -> Result<()> {
+        let properties = hashmap! {
+            "connector".to_string() => "kafka".to_string(),
+            "properties.bootstrap.server".to_string() => "localhost:29092".to_string(),
+            "identifier".to_string() => "test_sink_1".to_string(),
+            "type".to_string() => "append-only".to_string(),
+            "topic".to_string() => "test_topic".to_string(),
+        };
+        let schema = Schema::new(vec![
+            Field {
+                data_type: DataType::Int32,
+                name: "id".into(),
+                sub_fields: vec![],
+                type_name: "".into(),
+            },
+            Field {
+                data_type: DataType::Varchar,
+                name: "name".into(),
+                sub_fields: vec![],
+                type_name: "".into(),
+            },
+        ]);
+        let pk_indices = vec![];
+        let kafka_config = KafkaConfig::from_hashmap(properties)?;
+        let mut sink = KafkaSink::<true>::new(kafka_config.clone(), schema, pk_indices)
+            .await
+            .unwrap();
+
+        println!("Step1");
+        let v10 = Some(ScalarImpl::Int32(4));
+        let v11 = Some(ScalarImpl::Utf8("test_append".into()));
+
+        let data_types = [
+            DataType::Int32,
+            DataType::Varchar
+        ];
+
+        let chunk = StreamChunk::from_rows(
+            &[
+                (
+                    Op::Insert,
+                    OwnedRow::new(vec![v10, v11]),
+                ),
+            ],
+            &data_types,
+        );
+        println!("{:?}", chunk);
+        sink.begin_epoch(0).await?;
+        match sink.append_only(chunk).await{
+            Ok(()) => {},
+            Err(error) => println!{"Failed writing to kafka due to {}", error},
+        };
 
         Ok(())
     }
