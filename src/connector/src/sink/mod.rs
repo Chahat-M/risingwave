@@ -43,6 +43,10 @@ use crate::sink::redis::{RedisConfig, RedisSink};
 use crate::sink::remote::{RemoteConfig, RemoteSink};
 use crate::ConnectorParams;
 
+use protobuf_json_mapping::parse_dyn_from_str;
+use protobuf::reflect::{FileDescriptor, MessageDescriptor};
+use protobuf_parse::Parser;
+
 pub const DOWNSTREAM_SINK_KEY: &str = "connector";
 pub const SINK_TYPE_OPTION: &str = "type";
 pub const SINK_TYPE_APPEND_ONLY: &str = "append-only";
@@ -384,11 +388,77 @@ fn datum_to_json_object(
     Ok(value)
 }
 
+// Function to generate message descriptor for proto file
+pub fn generate_message_descriptor(proto_path: &str, msg_name: &str) -> MessageDescriptor {
+
+    let mut file_descriptor_proto_vec = Parser::new()
+        .pure()
+        .include("/home/ubuntu/rising/risingwave/src/connector/src/sink/")
+        .input(&proto_path)
+        .parse_and_typecheck()
+        .unwrap()
+        .file_descriptors;
+    assert_eq!(1, file_descriptor_proto_vec.len());
+
+    // Extracting one FileDescriptorProto from the vector
+    let file_descriptor_proto = file_descriptor_proto_vec.pop().unwrap();
+
+    // Initializing for reflective use 
+    let file_descriptor = FileDescriptor::new_dynamic(file_descriptor_proto, &[]).unwrap();
+
+    // Find msg - case sensitive
+    let msg_descriptor = file_descriptor
+        .message_by_package_relative_name(msg_name)
+        .unwrap();
+
+    // Find the field - case sensitive
+    // let field = msg_descriptor.field_by_name("id").unwrap();
+
+    //Set field.
+    // let mut empty_msg = msg_descriptor.new_instance();  // Creating empty message instance - used to set field
+    // field.set_singular_field(&mut *empty_msg, ReflectValueBox::I32(5));
+
+    // Get filed value to check if it's set or not
+    //println!("Output {:?}",field.name());
+
+    //println!("Text {:?}", protobuf::text_format::print_to_string(&*empty_msg));
+
+    return msg_descriptor;
+
+}
+
+// Convert json object to protobuf and return encoded protobuf bytes
+pub fn convert_json2pb(proto_path: &str, msg_name: &str, json_obj: &str, schema_id: i32) -> Vec<u8> {
+    let msg_desc = generate_message_descriptor(proto_path, msg_name);
+    let json2pb = parse_dyn_from_str(&msg_desc, json_obj).unwrap();
+
+    //println!{"Parsed"};
+    let mut json2pb_bytes = Vec::new();
+
+    if let Err(error) = json2pb.write_to_writer_dyn(&mut json2pb_bytes) {
+        panic!("Failed to write message: {}", error);
+    }
+
+    let mut enc_json2pb_bytes:Vec<u8> = Vec::new();
+    let magic_byte = 0u8;
+    let msg_index = 0u8;  // Varies if the message is not the first message in the proto
+
+    enc_json2pb_bytes.push(magic_byte);
+    enc_json2pb_bytes.extend(schema_id.to_be_bytes());
+    enc_json2pb_bytes.push(msg_index);
+    enc_json2pb_bytes.extend(json2pb_bytes);
+    //println!("Pb: {:?}",json2pb_bytes);
+    return enc_json2pb_bytes;
+}
+
 #[cfg(test)]
 mod tests {
 
     use risingwave_common::cast::str_with_time_zone_to_timestamptz;
     use risingwave_common::types::{Interval, ScalarImpl, Time, Timestamp};
+    use serde_json::{json, Map, Value,to_string};
+    use risingwave_common::array::DataChunk;
+    use risingwave_common::row::OwnedRow;
 
     use super::*;
     #[test]
@@ -505,5 +575,83 @@ mod tests {
         )
         .unwrap();
         assert_eq!(interval_value, json!("P1Y1M2DT0H0M1S"));
+    }
+
+    #[test]
+    fn test_datum(){
+        let mock_field = Field {
+            data_type: DataType::Boolean,
+            name: Default::default(),
+            sub_fields: Default::default(),
+            type_name: Default::default(),
+        };
+
+        let int16_value = datum_to_json_object(
+            &Field {
+                data_type: DataType::Int16,
+                ..mock_field.clone()
+            },
+            Some(ScalarImpl::Int16(16).as_scalar_ref_impl()),
+            TimestampHandlingMode::String,
+        )
+        .unwrap();
+        assert_eq!(int16_value, json!(16));
+
+        let boolean_value = datum_to_json_object(
+            &Field {
+                data_type: DataType::Boolean,
+                ..mock_field.clone()
+            },
+            Some(ScalarImpl::Bool(false).as_scalar_ref_impl()),
+            TimestampHandlingMode::String,
+        )
+        .unwrap();
+        assert_eq!(boolean_value, json!(false));
+
+        //println!("{} {}", field, int16_value);
+    }
+
+    #[test]
+    fn test_to_conversion() {
+        let v10 = Some(ScalarImpl::Int32(4));
+        let v11 = Some(ScalarImpl::Utf8("Value1".into()));
+
+        let v20 = Some(ScalarImpl::Int32(5));
+        let v21 = Some(ScalarImpl::Utf8("Value2".into()));
+
+        let row1 = OwnedRow::new(vec![v10, v11]);
+        let row2 = OwnedRow::new(vec![v20, v21]);
+
+        let chunk = DataChunk::from_rows(
+            &[row1, row2],
+            &[DataType::Int32, DataType::Varchar],
+        );
+
+        let row_ref = RowRef::new(&chunk, 0);
+
+        let schema = Schema::new(vec![
+            Field {
+                data_type: DataType::Int32,
+                name: "id".into(),
+                sub_fields: vec![],
+                type_name: "".into(),
+            },
+            Field {
+                data_type: DataType::Varchar,
+                name: "name".into(),
+                sub_fields: vec![],
+                type_name: "".into(),
+            },
+        ]);
+
+        let json_object:Map<String, Value> = record_to_json(row_ref, &schema.fields, TimestampHandlingMode::String).unwrap();
+        println!("{:?}", json_object);
+
+        let json_string = to_string(&json_object).expect("Failed to convert JSON to string"); //.map_err(|e| SinkError::Remote(format!("{:?}", e)))?; 
+        println!("{:?}", json_string);
+        //let json = json_object.to_string();
+
+        let output = convert_json2pb(&"/home/ubuntu/rising/risingwave/src/connector/src/sink/check.proto","Sample", json_string.as_str(),1);
+        println!("{:?}", output);
     }
 }

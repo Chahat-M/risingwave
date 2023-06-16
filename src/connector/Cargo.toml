@@ -105,6 +105,12 @@ urlencoding = "2"
 [target.'cfg(not(madsim))'.dependencies]
 workspace-hack = { path = "../workspace-hack" }
 
+protobuf = "3.2.0"
+protobuf-parse = "3.2.0"
+protobuf-codegen = "3.2.0"
+protobuf-codegen-pure = "2.0"
+protobuf-json-mapping = "3.2.0"
+
 [dev-dependencies]
 criterion = { version = "0.4", features = ["async_tokio", "async"] }
 rand = "0.8"

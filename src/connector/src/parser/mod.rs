@@ -24,7 +24,7 @@ use futures::Future;
 use futures_async_stream::try_stream;
 use itertools::Itertools;
 pub use json_parser::*;
-pub use protobuf::*;
+pub use self::protobuf::*;
 use risingwave_common::array::{ArrayBuilderImpl, Op, StreamChunk};
 use risingwave_common::error::ErrorCode::ProtocolError;
 use risingwave_common::error::{Result, RwError};
