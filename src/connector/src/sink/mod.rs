@@ -47,6 +47,10 @@ use protobuf_json_mapping::parse_dyn_from_str;
 use protobuf::reflect::{FileDescriptor, MessageDescriptor};
 use protobuf_parse::Parser;
 
+
+use std::fs::File;
+//use std::io::Write;
+
 pub const DOWNSTREAM_SINK_KEY: &str = "connector";
 pub const SINK_TYPE_OPTION: &str = "type";
 pub const SINK_TYPE_APPEND_ONLY: &str = "append-only";
@@ -388,6 +392,107 @@ fn datum_to_json_object(
     Ok(value)
 }
 
+/* 
+pub fn gen_proto_file(df: &DataFrame, topic: &str){
+    let mut column_info: Vec<ColumnInfo> = Vec::new();
+    /* 
+    for (i, col) in df.get_column_names().iter().enumerate() {
+        let column = &df.column(col);
+        
+        let proto_dtype = match column.dtype(){
+            DataType::Int32 => "int32",
+            DataType::Int64 => "int64",
+            DataType::Float32 | DataType::Float64 => "float",
+            DataType::String => "string",
+            _ => "",
+        };
+
+        let column_info_entry = ColumnInfo {
+            name: col.to_string(),
+            datatype: proto_dtype.to_string(),
+        };
+
+        column_info.push(column_info_entry);
+
+        let proto_str = format!(
+            r#"syntax = "proto3";
+            message {}_message {{
+            {} }}"#,
+            topic,
+            serde_json::to_string(&column_info).unwrap()
+        );
+    }
+    */
+
+    for (i, col) in df.get_column_names().iter().enumerate() {
+        match df.column(col) {
+            Ok(column) => {
+                let proto_dtype = match column.dtype() {
+                    polars::prelude::DataType::Int32 => "int32",
+                    polars::prelude::DataType::Int64 => "int64",
+                    polars::prelude::DataType::Float32 | polars::prelude::DataType::Float64 => "float",
+                    polars::prelude::DataType::Utf8 => "string",
+                    _ => "",
+                };
+                println!("Column: {}, proto_dtype: {}", col, proto_dtype);
+
+                let column_info_entry = ColumnInfo {
+                    name: col.to_string(),
+                    datatype: proto_dtype.to_string(),
+                };
+        
+                column_info.push(column_info_entry);
+            }
+            Err(err) => {
+                eprintln!("Error accessing column {}: {}", col, err);
+            }
+        }
+
+    }
+
+    let proto_str = format!(
+        r#"syntax = "proto3";
+        message {}_message {{
+        {} }}"#,
+        topic,
+        serde_json::to_string(&column_info).unwrap()
+    );
+
+    let fname = format!("{}.proto", topic);
+    let mut file = File::create(&fname).expect("Failed to create file");
+    file.write_all(proto_str.as_bytes()).expect("Failed to write to file");
+}
+*/
+
+pub fn gen_proto_file(schema: &Schema, topic: &str){
+    let column_names = schema.names();
+    let column_dtypes = schema.data_types();
+    let mut column_info = String::new();
+    for (index, (name, dtype)) in column_names.iter().zip(column_dtypes.iter()).enumerate() {
+        let proto_dtype = match dtype {
+            DataType::Int32 => "int32",
+            DataType::Int64 => "int64",
+            DataType::Float32 | DataType::Float64 => "float",
+            DataType::Varchar => "string",
+            _ => "",
+        };
+        column_info.push_str(&format!(
+            "{} {} = {},", proto_dtype, name, index
+        ));
+    }
+
+    let proto_str = format!(
+        r#"syntax = "proto3";
+        message {}_message {{
+            {}
+        }}"#,
+        topic, column_info);
+    
+    let fname = format!("{}.proto", topic);
+    let mut file = File::create(&fname).expect("Failed to create file");
+    file.write_all(proto_str.as_bytes()).expect("Failed to write to file");
+}
+
 // Function to generate message descriptor for proto file
 pub fn generate_message_descriptor(proto_path: &str, msg_name: &str) -> MessageDescriptor {
 
@@ -653,5 +758,24 @@ mod tests {
 
         let output = convert_json2pb(&"/home/ubuntu/rising/risingwave/src/connector/src/sink/check.proto","Sample", json_string.as_str(),1);
         println!("{:?}", output);
+    }
+
+    #[test]
+    fn test_proto() {
+        let schema = Schema::new(vec![
+            Field {
+                data_type: DataType::Int32,
+                name: "id".into(),
+                sub_fields: vec![],
+                type_name: "".into(),
+            },
+            Field {
+                data_type: DataType::Varchar,
+                name: "name".into(),
+                sub_fields: vec![],
+                type_name: "".into(),
+            },
+        ]);
+        gen_proto_file(&schema, "Sample");
     }
 }
