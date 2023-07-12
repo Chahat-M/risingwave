@@ -49,7 +49,8 @@ use protobuf_parse::Parser;
 
 
 use std::fs::File;
-//use std::io::Write;
+use std::io::Write;
+use std::path::Path;
 
 pub const DOWNSTREAM_SINK_KEY: &str = "connector";
 pub const SINK_TYPE_OPTION: &str = "type";
@@ -464,7 +465,7 @@ pub fn gen_proto_file(df: &DataFrame, topic: &str){
 }
 */
 
-pub fn gen_proto_file(schema: &Schema, topic: &str){
+pub fn gen_proto_file(schema: &Schema, topic: &str) -> String {
     let column_names = schema.names();
     let column_dtypes = schema.data_types();
     let mut column_info = String::new();
@@ -477,25 +478,34 @@ pub fn gen_proto_file(schema: &Schema, topic: &str){
             _ => "",
         };
         column_info.push_str(&format!(
-            "{} {} = {},", proto_dtype, name, index
+            "{} {} = {};", proto_dtype, name, index+1
         ));
     }
 
-    let proto_str = format!(
-        r#"syntax = "proto3";
-        message {}_message {{
-            {}
-        }}"#,
-        topic, column_info);
+    let proto_str = format!(r#"syntax = "proto3"; message {} {{ {} }}"#,
+    topic, column_info);
     
     let fname = format!("{}.proto", topic);
     let mut file = File::create(&fname).expect("Failed to create file");
     file.write_all(proto_str.as_bytes()).expect("Failed to write to file");
+    return fname;
 }
 
 // Function to generate message descriptor for proto file
-pub fn generate_message_descriptor(proto_path: &str, msg_name: &str) -> MessageDescriptor {
+pub fn generate_message_descriptor(schema: &Schema, msg_name: &str) -> MessageDescriptor {
+    let proto_path = gen_proto_file(schema, msg_name).clone();
+    let file_path = Path::new(&proto_path);
+    println!("{:?}, {:?}", file_path, file_path.parent());
 
+    let mut file_descriptor_proto_vec = Parser::new()
+        .pure()
+        .include(file_path.parent().unwrap())
+        .input(file_path)
+        .parse_and_typecheck()
+        .unwrap()
+        .file_descriptors;
+
+    /* 
     let mut file_descriptor_proto_vec = Parser::new()
         .pure()
         .include("/home/ubuntu/rising/risingwave/src/connector/src/sink/")
@@ -503,6 +513,7 @@ pub fn generate_message_descriptor(proto_path: &str, msg_name: &str) -> MessageD
         .parse_and_typecheck()
         .unwrap()
         .file_descriptors;
+    */
     assert_eq!(1, file_descriptor_proto_vec.len());
 
     // Extracting one FileDescriptorProto from the vector
@@ -533,8 +544,8 @@ pub fn generate_message_descriptor(proto_path: &str, msg_name: &str) -> MessageD
 }
 
 // Convert json object to protobuf and return encoded protobuf bytes
-pub fn convert_json2pb(proto_path: &str, msg_name: &str, json_obj: &str, schema_id: i32) -> Vec<u8> {
-    let msg_desc = generate_message_descriptor(proto_path, msg_name);
+pub fn convert_json2pb(schema: &Schema, msg_name: &str, json_obj: &str, schema_id: i32) -> Vec<u8> {
+    let msg_desc = generate_message_descriptor(schema, msg_name);
     let json2pb = parse_dyn_from_str(&msg_desc, json_obj).unwrap();
 
     //println!{"Parsed"};
@@ -755,8 +766,8 @@ mod tests {
         let json_string = to_string(&json_object).expect("Failed to convert JSON to string"); //.map_err(|e| SinkError::Remote(format!("{:?}", e)))?; 
         println!("{:?}", json_string);
         //let json = json_object.to_string();
-
-        let output = convert_json2pb(&"/home/ubuntu/rising/risingwave/src/connector/src/sink/check.proto","Sample", json_string.as_str(),1);
+        let output = convert_json2pb(&schema,"Sample", json_string.as_str(),1);
+        
         println!("{:?}", output);
     }
 

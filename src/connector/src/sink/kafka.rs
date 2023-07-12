@@ -380,7 +380,7 @@ impl<const APPEND_ONLY: bool> KafkaSink<APPEND_ONLY> {
         for (op, row) in chunk.rows() {
             if op == Op::Insert {
                 let record = Value::Object(record_to_json(row, &self.schema.fields, TimestampHandlingMode::String)?).to_string();
-                let pb_record = convert_json2pb("/home/ubuntu/rising/risingwave/src/connector/src/sink/check.proto","Sample", record.as_str(), 1);
+                let pb_record = convert_json2pb(&self.schema,"Sample", record.as_str(), 1);
                 self.send(
                     BaseRecord::to(self.config.common.topic.as_str())
                         .key(self.gen_message_key().as_bytes())
