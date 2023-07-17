@@ -395,78 +395,7 @@ fn datum_to_json_object(
     Ok(value)
 }
 
-/* 
-pub fn gen_proto_file(df: &DataFrame, topic: &str){
-    let mut column_info: Vec<ColumnInfo> = Vec::new();
-    /* 
-    for (i, col) in df.get_column_names().iter().enumerate() {
-        let column = &df.column(col);
-        
-        let proto_dtype = match column.dtype(){
-            DataType::Int32 => "int32",
-            DataType::Int64 => "int64",
-            DataType::Float32 | DataType::Float64 => "float",
-            DataType::String => "string",
-            _ => "",
-        };
-
-        let column_info_entry = ColumnInfo {
-            name: col.to_string(),
-            datatype: proto_dtype.to_string(),
-        };
-
-        column_info.push(column_info_entry);
-
-        let proto_str = format!(
-            r#"syntax = "proto3";
-            message {}_message {{
-            {} }}"#,
-            topic,
-            serde_json::to_string(&column_info).unwrap()
-        );
-    }
-    */
-
-    for (i, col) in df.get_column_names().iter().enumerate() {
-        match df.column(col) {
-            Ok(column) => {
-                let proto_dtype = match column.dtype() {
-                    polars::prelude::DataType::Int32 => "int32",
-                    polars::prelude::DataType::Int64 => "int64",
-                    polars::prelude::DataType::Float32 | polars::prelude::DataType::Float64 => "float",
-                    polars::prelude::DataType::Utf8 => "string",
-                    _ => "",
-                };
-                println!("Column: {}, proto_dtype: {}", col, proto_dtype);
-
-                let column_info_entry = ColumnInfo {
-                    name: col.to_string(),
-                    datatype: proto_dtype.to_string(),
-                };
-        
-                column_info.push(column_info_entry);
-            }
-            Err(err) => {
-                eprintln!("Error accessing column {}: {}", col, err);
-            }
-        }
-
-    }
-
-    let proto_str = format!(
-        r#"syntax = "proto3";
-        message {}_message {{
-        {} }}"#,
-        topic,
-        serde_json::to_string(&column_info).unwrap()
-    );
-
-    let fname = format!("{}.proto", topic);
-    let mut file = File::create(&fname).expect("Failed to create file");
-    file.write_all(proto_str.as_bytes()).expect("Failed to write to file");
-}
-*/
-
+// Function to generate the proto file. File name will be same as the topic provided as input parameter
 pub fn gen_proto_file(schema: &Schema, topic: &str) -> String {
     let column_names = schema.names();
     let column_dtypes = schema.data_types();
@@ -535,15 +464,6 @@ pub fn generate_message_descriptor(schema: &Schema, msg_name: &str) -> MessageDe
         .unwrap()
         .file_descriptors;
 
-    /* 
-    let mut file_descriptor_proto_vec = Parser::new()
-        .pure()
-        .include("/home/ubuntu/rising/risingwave/src/connector/src/sink/")
-        .input(&proto_path)
-        .parse_and_typecheck()
-        .unwrap()
-        .file_descriptors;
-    */
     assert_eq!(1, file_descriptor_proto_vec.len());
 
     // Extracting one FileDescriptorProto from the vector
@@ -578,7 +498,6 @@ pub fn convert_json2pb(schema: &Schema, msg_name: &str, json_obj: &str, schema_i
     let msg_desc = generate_message_descriptor(schema, msg_name);
     let json2pb = parse_dyn_from_str(&msg_desc, json_obj).unwrap();
 
-    //println!{"Parsed"};
     let mut json2pb_bytes = Vec::new();
 
     if let Err(error) = json2pb.write_to_writer_dyn(&mut json2pb_bytes) {
@@ -593,7 +512,6 @@ pub fn convert_json2pb(schema: &Schema, msg_name: &str, json_obj: &str, schema_i
     enc_json2pb_bytes.extend(schema_id.to_be_bytes());
     enc_json2pb_bytes.push(msg_index);
     enc_json2pb_bytes.extend(json2pb_bytes);
-    //println!("Pb: {:?}",json2pb_bytes);
     return enc_json2pb_bytes;
 }
 
