@@ -47,10 +47,12 @@ use protobuf_json_mapping::parse_dyn_from_str;
 use protobuf::reflect::{FileDescriptor, MessageDescriptor};
 use protobuf_parse::Parser;
 
-
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+
+use reqwest::blocking::Client;
+use reqwest::header::CONTENT_TYPE;
 
 pub const DOWNSTREAM_SINK_KEY: &str = "connector";
 pub const SINK_TYPE_OPTION: &str = "type";
@@ -478,17 +480,45 @@ pub fn gen_proto_file(schema: &Schema, topic: &str) -> String {
             _ => "",
         };
         column_info.push_str(&format!(
-            "{} {} = {};", proto_dtype, name, index+1
+            "{} {} = {}; ", proto_dtype, name, index+1
         ));
     }
 
-    let proto_str = format!(r#"syntax = "proto3"; message {} {{ {} }}"#,
+    let proto_str = format!(r#"syntax = \"proto3\"; message {} {{ {}}}"#,
     topic, column_info);
     
     let fname = format!("{}.proto", topic);
     let mut file = File::create(&fname).expect("Failed to create file");
     file.write_all(proto_str.as_bytes()).expect("Failed to write to file");
     return fname;
+}
+
+// Function to register schema on confluent schema registry
+pub fn register_schema(
+    schema_registry_url: &str,
+    subject: &str,
+    proto_schema: &str,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new();
+    let url = format!("{}/subjects/{}/versions", schema_registry_url, subject);
+
+    let request_body = format!(
+        r#"{{"schemaType": "PROTOBUF", "schema": "{}"}}"#,
+        proto_schema
+    );
+
+    let request_builder = client.post(&url).header(CONTENT_TYPE, "application/vnd.schemaregistry.v1+json").body(request_body.clone());
+
+    let response = request_builder.send()?;
+
+    if response.status().is_success() {
+        println!("Schema registered successfully!");
+    } else {
+        let status = response.status();
+        let error_message = response.text()?;
+        println!("Failed to register schema. Status: {:?}\nError: {}", status, error_message);    }
+
+    Ok(())
 }
 
 // Function to generate message descriptor for proto file
@@ -575,6 +605,8 @@ mod tests {
     use serde_json::{json, Map, Value,to_string};
     use risingwave_common::array::DataChunk;
     use risingwave_common::row::OwnedRow;
+    use std::fs::File;
+    use std::io::Read;
 
     use super::*;
     #[test]
@@ -788,5 +820,43 @@ mod tests {
             },
         ]);
         gen_proto_file(&schema, "Sample");
+    }
+
+    #[test]
+    fn test_schema_registry(){
+        //let schema_registry_url = "http://54.199.25.249:8081"; // Replace with your schema registry URL
+        let schema = Schema::new(vec![
+            Field {
+                data_type: DataType::Int32,
+                name: "id".into(),
+                sub_fields: vec![],
+                type_name: "".into(),
+            },
+            Field {
+                data_type: DataType::Varchar,
+                name: "name".into(),
+                sub_fields: vec![],
+                type_name: "".into(),
+            },
+        ]);
+        let file_name = gen_proto_file(&schema, "Sample");        
+        let url = "http://localhost:8081";  // Replace with your url
+        let subject = "testschema1-value"; // Replace with the subject name
+    
+        match File::open(file_name) {
+            Ok(mut file) => {
+                let mut proto_schema = String::new();
+                if let Err(err) = file.read_to_string(&mut proto_schema) {
+                    eprintln!("Error reading file: {}", err);
+                    return;
+                }
+                println!("File contents:\n{}", proto_schema);
+
+                if let Err(err) = register_schema(url, subject, proto_schema.as_str()){
+                    eprintln!("Error: {:?}", err);
+                }
+            }
+            Err(err) => eprintln!("Error opening file: {}", err),
+        }
     }
 }

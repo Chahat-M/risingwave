@@ -110,6 +110,7 @@ protobuf-parse = "3.2.0"
 protobuf-codegen = "3.2.0"
 protobuf-codegen-pure = "2.0"
 protobuf-json-mapping = "3.2.0"
+reqwest = "0.11.18"
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["async_tokio", "async"] }
